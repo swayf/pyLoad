@@ -31,7 +31,7 @@ if os.name != "nt":
 
 
 from Base import Base
-from module.utils import save_join, save_path, fs_encode, chunks
+from module.utils import save_join, save_path, fs_encode, fs_decode, chunks
 
 class Abort(Exception):
     """ raised when aborted """
@@ -397,6 +397,8 @@ class Plugin(Base):
                 except Exception, e:
                     self.log.warning(_("Setting User and Group failed: %s") % str(e))
 
+        # convert back to unicode
+        location = fs_decode(location)
         name = save_path(self.pyfile.name)
 
         filename = join(location, name)
@@ -415,15 +417,17 @@ class Plugin(Base):
             self.pyfile.name = newname
             filename = join(location, newname)
 
+        fs_filename = fs_encode(filename)
+
         if self.core.config["permission"]["change_file"]:
-            chmod(filename, int(self.core.config["permission"]["file"], 8))
+            chmod(fs_filename, int(self.core.config["permission"]["file"], 8))
 
         if self.core.config["permission"]["change_dl"] and os.name != "nt":
             try:
                 uid = getpwnam(self.config["permission"]["user"])[2]
                 gid = getgrnam(self.config["permission"]["group"])[2]
 
-                chown(filename, uid, gid)
+                chown(fs_filename, uid, gid)
             except Exception, e:
                 self.log.warning(_("Setting User and Group failed: %s") % str(e))
 
