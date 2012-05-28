@@ -46,7 +46,7 @@ class BitshareCom(Hoster):
     __name__ = "BitshareCom"
     __type__ = "hoster"
     __pattern__ = r"http://(www\.)?bitshare\.com/(files/(?P<id1>[a-zA-Z0-9]+)(/(?P<name>.*?)\.html)?|\?f=(?P<id2>[a-zA-Z0-9]+))"
-    __version__ = "0.42"
+    __version__ = "0.44"
     __description__ = """Bitshare.Com File Download Hoster"""
     __author_name__ = ("paulking", "fragonib")
     __author_mail__ = (None, "fragonib[AT]yahoo[DOT]es")
@@ -58,10 +58,12 @@ class BitshareCom(Hoster):
     CAPTCHA_KEY_PATTERN = r"http://api\.recaptcha\.net/challenge\?k=(.*?) " 
         
     def setup(self):
-        self.multiDL = False
+        self.multiDL = self.premium
         self.chunkLimit = 1
 
     def process(self, pyfile):
+        if self.premium:
+            self.account.relogin(self.user)
     
         self.pyfile = pyfile
         
@@ -116,8 +118,13 @@ class BitshareCom(Hoster):
         # Waiting
         if wait > 0:
             self.logDebug("Waiting %d seconds." % wait)
-            self.setWait(wait, True)
-            self.wait()
+            if wait < 120:
+                self.setWait(wait, False)
+                self.wait()
+            else:
+                self.setWait(wait - 55, True)
+                self.wait()
+                self.retry()  
             
         # Resolve captcha
         if captcha == 1:
@@ -142,10 +149,12 @@ class BitshareCom(Hoster):
         url = response.split("#")[-1]    
         
         return url
-        
+                 
     def handleErrors(self, response, separator):
         self.logDebug("Checking response [%s]" % response)
-        if "ERROR" in response:
+        if "ERROR:Session timed out" in response:
+            self.retry()
+        elif "ERROR" in response:
             msg = response.split(separator)[-1]
             self.fail(msg)
 
@@ -154,5 +163,7 @@ class BitshareCom(Hoster):
         if "SUCCESS" in response:
             self.correctCaptcha()
             return True
+        elif "ERROR:SESSION ERROR" in response:
+            self.retry()
         self.logDebug("Wrong captcha")
         self.invalidCaptcha()
