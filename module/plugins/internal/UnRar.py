@@ -27,7 +27,7 @@ from module.plugins.internal.AbstractExtractor import AbtractExtractor, WrongPas
 
 class UnRar(AbtractExtractor):
     __name__ = "UnRar"
-    __version__ = "0.1"
+    __version__ = "0.11"
 
     # there are some more uncovered rar formats
     re_splitfile = re.compile(r"(.*)\.part(\d+)\.rar$")
@@ -127,6 +127,8 @@ class UnRar(AbtractExtractor):
             raise WrongPassword
         if err.strip(): #raise error if anything is on stderr
             raise ArchiveError(err.strip())
+        if p.returncode:
+            raise ArchiveError("Process terminated")
 
         if not self.files:
             self.password = password

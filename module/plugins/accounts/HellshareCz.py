@@ -22,7 +22,7 @@ import re
 
 class HellshareCz(Account):
     __name__ = "HellshareCz"
-    __version__ = "0.11"
+    __version__ = "0.12"
     __type__ = "account"
     __description__ = """hellshare.cz account plugin"""
     __author_name__ = ("zoidberg")
@@ -37,17 +37,19 @@ class HellshareCz(Account):
         found = re.search(self.CREDIT_LEFT_PATTERN, html)
         if found is None:
             credits = 0
+            premium = False
         else:
             credits = int(found.group(1)) * 1024
+            premium = True
 
-        return {"validuntil": -1, "trafficleft": credits}
+        return {"validuntil": -1, "trafficleft": credits, "premium": premium}
 
     def login(self, user, data, req):
-
         html = req.load('http://www.hellshare.com/login?do=loginForm-submit', post={
                 "login": "Log in",
                 "password": data["password"],
-                "username": user
+                "username": user,
+                "perm_login": "on"
                 })
 
         if "<p>You input a wrong user name or wrong password</p>" in html:

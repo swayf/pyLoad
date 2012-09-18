@@ -23,18 +23,18 @@ from time import time
 
 class NetloadIn(Account):
     __name__ = "NetloadIn"
-    __version__ = "0.2"
+    __version__ = "0.22"
     __type__ = "account"
     __description__ = """netload.in account plugin"""
-    __author_name__ = ("RaNaN", "DHMH")
-    __author_mail__ = ("RaNaN@pyload.org", "DHMH@pyload.org")
+    __author_name__ = ("RaNaN", "CryNickSystems")
+    __author_mail__ = ("RaNaN@pyload.org", "webmaster@pcProfil.de")
 
     def loadAccountInfo(self, user, req):
-        page = req.load("http://netload.in/index.php?id=2")
-        left = r">(\d+) Tage, (\d+) Stunden<"
+        page = req.load("http://netload.in/index.php?id=2&lang=de")
+        left = r">(\d+) (Tag|Tage), (\d+) Stunden<"
         left = re.search(left, page)
         if left:
-            validuntil = time() + int(left.group(1)) * 24 * 60 * 60 + int(left.group(2)) * 60 * 60
+            validuntil = time() + int(left.group(1)) * 24 * 60 * 60 + int(left.group(3)) * 60 * 60
             trafficleft = -1
             premium = True
         else:
@@ -44,6 +44,6 @@ class NetloadIn(Account):
         return {"validuntil": validuntil, "trafficleft": trafficleft, "premium" : premium}
     
     def login(self, user, data,req):
-        page = req.load("http://netload.in/index.php", None, { "txtuser" : user, "txtpass" : data['password'], "txtcheck" : "login", "txtlogin" : ""}, cookies=True)
+        page = req.load("http://netload.in/index.php", None, { "txtuser" : user, "txtpass" : data['password'], "txtcheck" : "login", "txtlogin" : "Login"}, cookies=True)
         if "password or it might be invalid!" in page:
             self.wrongPassword()

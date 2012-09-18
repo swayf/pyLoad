@@ -16,7 +16,7 @@ def getInfo(urls):
             result.append((url, 0, 1, url))
             continue
 
-        m = re.search(OronCom.FILE_INFO_PATTERN, html)
+        m = re.search(OronCom.FILE_INFO_PATTERN, html, re.MULTILINE)
         if m:
             name = m.group(1)
             size = parseFileSize(m.group(2), m.group(3))
@@ -31,11 +31,11 @@ def getInfo(urls):
 class OronCom(Hoster):
     __name__ = "OronCom"
     __type__ = "hoster"
-    __pattern__ = r"http://(?:www\.)?oron.com/(?!folder/)"
-    __version__ = "0.14"
-    __description__ = "File Hoster: Oron.com"
+    __pattern__ = r"http://(?:www.)?oron.com/(?!folder)\w+"
+    __version__ = "0.16"
+    __description__ = "Oron.com Hoster Plugin"
     __author_name__ = ("chrox", "DHMH")
-    __author_mail__ = ("chrox@pyload.org", "DHMH@pyload.org")
+    __author_mail__ = ("chrox@pyload.org", "webmaster@pcProfil.de")
 
     FILE_INFO_PATTERN = r'(?:Filename|Dateiname): <b class="f_arial f_14px">(.*?)</b>\s*<br>\s*(?:Größe|File size): ([0-9,\.]+) (Kb|Mb|Gb)'
 
@@ -50,7 +50,8 @@ class OronCom(Hoster):
         #self.load("http://oron.com/?op=change_lang&lang=german")
         # already logged in, so the above line shouldn't be necessary
         self.html = self.load(self.pyfile.url, ref=False, decode=True).encode("utf-8").replace("\n", "")
-        if "File could not be found" in self.html or "Datei nicht gefunden" in self.html:
+        if "File could not be found" in self.html or "Datei nicht gefunden" in self.html or \
+                                        "This file has been blocked for TOS violation." in self.html:
             self.offline()
         self.html = self.html.replace("\t", "")
         m = re.search(self.FILE_INFO_PATTERN, self.html)
@@ -126,13 +127,13 @@ class OronCom(Hoster):
             self.logError("error in parsing site")
 
     def handlePremium(self):
-        self.account.getAccountInfo(True)
-        self.logDebug("Traffic left: %s" % self.account.formatTrafficleft())
-        self.logDebug("File Size: %s" % self.pyfile.formatSize())
+        info = self.account.getAccountInfo(self.user, True)
+        self.logDebug("Traffic left: %s" % info['trafficleft'])
+        self.logDebug("File Size: %d" % int(self.pyfile.size / 1024))
 
-        if int(self.pyfile.size / 1024) > self.account.trafficleft:
+        if int(self.pyfile.size / 1024) > info["trafficleft"]:
             self.logInfo(_("Not enough traffic left"))
-            self.account.empty()
+            self.account.empty(self.user)
             self.fail(_("Traffic exceeded"))
 
         post_url = "http://oron.com/" + self.file_id
@@ -144,4 +145,3 @@ class OronCom(Hoster):
         self.html = self.load(post_url, post=post_dict, ref=False, decode=True).encode("utf-8")
         link = re.search('href="(.*?)" class="atitle"', self.html).group(1)
         self.download(link)
-

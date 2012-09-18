@@ -24,7 +24,7 @@ def getInfo(urls):
             if match:
                 ids = ids + match.group(1) +";"
 
-        api = getURL(apiurl+ids)
+        api = getURL(apiurl+ids, decode = True)
 
         if api is None or len(api) < 10:
             print "Netload prefetch: failed "
@@ -53,14 +53,14 @@ class NetloadIn(Hoster):
     __name__ = "NetloadIn"
     __type__ = "hoster"
     __pattern__ = r"http://.*netload\.in/(?:datei(.*?)(?:\.htm|/)|index.php?id=10&file_id=)"
-    __version__ = "0.33"
+    __version__ = "0.40"
     __description__ = """Netload.in Download Hoster"""
     __author_name__ = ("spoob", "RaNaN", "Gregy")
     __author_mail__ = ("spoob@pyload.org", "ranan@pyload.org", "gregy@gregy.cz")
 
     def setup(self):
         self.multiDL = False
-        if self.account:
+        if self.premium:
             self.multiDL = True
             self.chunkLimit = -1
             self.resumeDownload = True
@@ -77,7 +77,7 @@ class NetloadIn(Hoster):
         if self.api_data and self.api_data["filename"]:
             self.pyfile.name = self.api_data["filename"]
 
-        if self.account:
+        if self.premium:
             self.log.debug("Netload: Use Premium Account")
             return True
 
@@ -96,8 +96,8 @@ class NetloadIn(Hoster):
             self.api_data = False
             return
 
-        apiurl = "http://netload.in/share/fileinfos2.php"
-        src = self.load(apiurl, cookies=False, get={"file_id": match.group(1)}).strip()
+        apiurl = "http://api.netload.in/info.php"
+        src = self.load(apiurl, cookies=False, get={"file_id": match.group(1), "auth": "Zf9SnQh9WiReEsb18akjvQGqT0I830e8", "bz": "1", "md5": "1"}, decode = True).strip()
         if not src and n <= 3:
             sleep(0.2)
             self.download_api_data(n+1)
@@ -105,7 +105,7 @@ class NetloadIn(Hoster):
 
         self.log.debug("Netload: APIDATA: "+src)
         self.api_data = {}
-        if src and src not in ("unknown file_data", "unknown_server_data"):
+        if src and src not in ("unknown file_data", "unknown_server_data", "No input file specified."):
             lines = src.split(";")
             self.api_data["exists"] = True
             self.api_data["fileid"] = lines[0]
@@ -145,7 +145,11 @@ class NetloadIn(Hoster):
                 self.offline()
 
             name = re.search(r'class="dl_first_filename">([^<]+)', page, re.MULTILINE)
-            self.pyfile.name = name.group(1).strip()
+            # the found filename is not truncated 
+            if name:
+                name = name.group(1).strip()
+                if not name.endswith(".."):
+                    self.pyfile.name = name
 
         captchawaited = False
         for i in range(10):
@@ -160,11 +164,11 @@ class NetloadIn(Hoster):
             
             self.log.debug("Netload: try number %d " % i)
 
-            if re.search(r"(We will prepare your download..)", page) is not None:
+            if ">Your download is being prepared.<" in page:
                 self.log.debug("Netload: We will prepare your download")
                 self.final_wait(page)
                 return True
-            if re.search(r"(We had a reqeust with the IP)", page) is not None:
+            if ">An access request has been made from IP address <" in page:
                 wait = self.get_wait_time(page)
                 if wait == 0:
                     self.log.debug("Netload: Wait was 0 setting 30")
@@ -211,7 +215,7 @@ class NetloadIn(Hoster):
 
     def get_file_url(self, page):
         try:
-            file_url_pattern = r"<a class=\"Orange_Link\" href=\"(http://.+)\".?>Click here"
+            file_url_pattern = r"<a class=\"Orange_Link\" href=\"(http://.+)\".?>Or click here"
             attempt = re.search(file_url_pattern, page)
             if attempt is not None:
                 return attempt.group(1)
@@ -232,12 +236,12 @@ class NetloadIn(Hoster):
     def proceed(self, url):
         self.log.debug("Netload: Downloading..")
 
-        self.download(url)
+        self.download(url, disposition=True)
 
         check = self.checkDownload({"empty": re.compile(r"^$"), "offline": re.compile("The file was deleted")})
 
         if check == "empty":
-            self.log.info(_("Downloaded File was empty"))
+            self.logInfo(_("Downloaded File was empty"))
             self.retry()
         elif check == "offline":
             self.offline()

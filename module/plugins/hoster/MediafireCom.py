@@ -58,7 +58,7 @@ class MediafireCom(SimpleHoster):
     __name__ = "MediafireCom"
     __type__ = "hoster"
     __pattern__ = r"http://(\w*\.)*mediafire\.com/(file/|(download.php)?\?)(\w{11}|\w{15})($|/)"
-    __version__ = "0.74"
+    __version__ = "0.76"
     __description__ = """Mediafire.com plugin - free only"""
     __author_name__ = ("zoidberg")
     __author_mail__ = ("zoidberg@mujmail.cz")
@@ -75,7 +75,7 @@ class MediafireCom(SimpleHoster):
     FILE_OFFLINE_PATTERN = r'class="error_msg_title"> Invalid or Deleted File. </div>'
     
     def setup(self):
-        self.multiDL = True
+        self.multiDL = False
 
     def process(self, pyfile):
         self.url, result = checkHTMLHeader(pyfile.url)
@@ -83,15 +83,18 @@ class MediafireCom(SimpleHoster):
         
         if result == 0:
             self.html = self.load(self.url, decode = True)
-            self.checkCaptcha()
+            self.checkCaptcha()            
+            self.multiDL = True            
             self.getFileInfo()
+            
             if self.account:
                 self.handlePremium()
             else:
                 self.handleFree()
         elif result == 1:
             self.offline() 
-        else:            
+        else:
+            self.multiDL = True            
             self.download(self.url, disposition = True)
 
     def handleFree(self):
@@ -104,6 +107,7 @@ class MediafireCom(SimpleHoster):
             else:
                 self.fail("No or incorrect password")
         
+        """
         links = re.findall(self.DOWNLOAD_LINK_PATTERN, self.html)
         link_count = len(links)
         self.logDebug('LINKS ', links)
@@ -131,6 +135,11 @@ class MediafireCom(SimpleHoster):
             
         else:
             zindex, download_url = links[0]
+        """
+        found = re.search(r'kNO = "(http://.*?)";', self.html)
+        if not found: self.parseError("Download URL")
+        download_url = found.group(1)
+        self.logDebug("DOWNLOAD LINK:", download_url) 
             
         self.download(download_url)
 

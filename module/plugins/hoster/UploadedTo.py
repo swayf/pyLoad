@@ -10,19 +10,10 @@ from module.plugins.ReCaptcha import ReCaptcha
 
 key = "bGhGMkllZXByd2VEZnU5Y2NXbHhYVlZ5cEE1bkEzRUw=".decode('base64')
 
-def correctDownloadLink(url):
-    url = re.sub("http://.*?/", "http://uploaded.to/",url, 1)
-    url = re.sub("\\.to/.*?id=", ".to/file/", url, 1)
-
-    if "/file/" not in url:
-        url = url.replace("uploaded.to/", "uploaded.to/file/")
-
-    parts = url.split("/")
-    return "/".join(parts[:min(5,len(parts))]) + "/"
-
 def getID(url):
-    """ returns id of corrected url"""
-    return re.search(r"uploaded.to/file/([^/]+)", url).group(1)
+    """ returns id from file url"""
+    m = re.match(r"http://[\w\.-]*?(uploaded\.(to|net)(/file/|/?\?id=|.*?&id=)|ul\.to/)(?P<ID>\w+)", url)
+    return m.group('ID')
 
 def getAPIData(urls):
         post = {"apikey" : key}
@@ -30,18 +21,17 @@ def getAPIData(urls):
         idMap = {}
 
         for i, url in enumerate(urls):
-            newUrl = correctDownloadLink(url)
-            id = getID(newUrl)
+            id = getID(url)
             post["id_%s" % i] = id
             idMap[id] = url
 
-        api = unicode(getURL("http://uploaded.to/api/filemultiple", post=post, decode=False), 'iso-8859-1')
+        api = unicode(getURL("http://uploaded.net/api/filemultiple", post=post, decode=False), 'iso-8859-1')
 
         result = {}
 
         if api:
             for line in api.splitlines():
-                data = line.split(",")
+                data = line.split(",", 4)
                 if data[1] in idMap:
                     result[data[1]] = (data[0], data[2], data[4], data[3], idMap[data[1]])
 
@@ -82,11 +72,11 @@ def getInfo(urls):
 class UploadedTo(Hoster):
     __name__ = "UploadedTo"
     __type__ = "hoster"
-    __pattern__ = r"(http://[\w\.-]*?uploaded\.to/.*?(file/|\?id=|&id=)[\w]+/?)|(http://[\w\.]*?ul\.to/(\?id=|&id=)?[\w\-]+/.+)|(http://[\w\.]*?ul\.to/(\?id=|&id=)?[\w\-]+/?)"
-    __version__ = "0.53"
-    __description__ = """Uploaded.to Download Hoster"""
-    __author_name__ = ("spoob", "mkaay")
-    __author_mail__ = ("spoob@pyload.org", "mkaay@mkaay.de")
+    __pattern__ = r"http://[\w\.-]*?(uploaded\.(to|net)(/file/|/?\?id=|.*?&id=)|ul\.to/)\w+"   
+    __version__ = "0.62"
+    __description__ = """Uploaded.net Download Hoster"""
+    __author_name__ = ("spoob", "mkaay", "zoidberg", "netpok")
+    __author_mail__ = ("spoob@pyload.org", "mkaay@mkaay.de", "zoidberg@mujmail.cz", "netpok@gmail.com")
 
     FILE_INFO_PATTERN = r'<a href="file/(?P<ID>\w+)" id="filename">(?P<N>[^<]+)</a> &nbsp;\s*<small[^>]*>(?P<S>[^<]+)</small>'
     FILE_OFFLINE_PATTERN = r'<small class="cL">Error: 404</small>'
@@ -103,12 +93,12 @@ class UploadedTo(Hoster):
                 self.multiDL = True
                 self.resumeDownload = True
 
-
-        self.pyfile.url = correctDownloadLink(self.pyfile.url)
         self.fileID = getID(self.pyfile.url)
+        self.pyfile.url = "http://uploaded.net/file/%s" % self.fileID
 
     def process(self, pyfile):
-        self.req.cj.setCookie("uploaded.to", "lang", "en")
+        self.req.cj.setCookie("uploaded.net", "lang", "en") # doesn't work anymore
+        self.load("http://uploaded.net/language/en")
 
         api = getAPIData([pyfile.url])
 
@@ -156,24 +146,42 @@ class UploadedTo(Hoster):
             self.resetAccount()
             self.fail(_("Traffic exceeded"))
 
-        self.download("http://uploaded.to/file/%s/ddl" % self.fileID)
-
+        header = self.load("http://uploaded.net/file/%s" % self.fileID, just_header=True)
+        if "location" in header:
+            #Direct download
+            print "Direct Download: " + header['location']
+            self.download(header['location'])
+        else:
+            #Indirect download
+            self.html = self.load("http://uploaded.net/file/%s" % self.fileID)
+            found = re.search(r'<div class="tfree".*\s*<form method="post" action="(.*?)"', self.html)
+            if not found:
+                self.fail("Download URL not found. Try to enable direct downloads.")
+            url = found.group(1)
+            print "Premium URL: " + url
+            self.download(url, post={})
 
     def handleFree(self):
         self.html = self.load(self.pyfile.url, decode=True)
+        
+        if 'var free_enabled = false;' in self.html:
+            self.logError("Free-download capacities exhausted.")
+            self.retry(24, 300)
 
-        wait = re.search(r"Current waiting period: <span>(\d+)</span> seconds", self.html).group(1)
-        self.setWait(wait)
+        found = re.search(r"Current waiting period: <span>(\d+)</span> seconds", self.html)
+        if not found:
+            self.fail("File not downloadable for free users")
+        self.setWait(int(found.group(1)))
 
-        js = self.load("http://uploaded.to/js/download.js", decode=True)
+        js = self.load("http://uploaded.net/js/download.js", decode=True)
 
         challengeId = re.search(r'Recaptcha\.create\("([^"]+)', js)
 
-        url = "http://uploaded.to/io/ticket/captcha/%s" % self.fileID
+        url = "http://uploaded.net/io/ticket/captcha/%s" % self.fileID
         downloadURL = ""
 
         for i in range(5):
-            self.req.lastURL = str(self.url)
+            #self.req.lastURL = str(self.url)
             re_captcha = ReCaptcha(self)
             challenge, result = re_captcha.challenge(challengeId.group(1))
             options = {"recaptcha_challenge_field" : challenge, "recaptcha_response_field": result}
@@ -190,16 +198,22 @@ class UploadedTo(Hoster):
                 self.retry()
             elif "limit-parallel" in result:
                 self.fail("Cannot download in parallel")
-            elif "limit-dl" in result:
-                self.setWait(30 * 60, True)
+            elif "You have reached the max. number of possible free downloads for this hour" in result: # limit-dl
+                self.setWait(60 * 60, True)
                 self.wait()
                 self.retry()
             elif 'err:"captcha"' in result:
+                self.logError("ul.net captcha is disabled")
                 self.invalidCaptcha()
             elif "type:'download'" in result:
                 self.correctCaptcha()
                 downloadURL = re.search("url:'([^']+)", result).group(1)
                 break
+            else:
+                self.fail("Unknown error '%s'")
+                self.setWait(60 * 60, True)
+                self.wait()
+                self.retry()
 
         if not downloadURL:
             self.fail("No Download url retrieved/all captcha attempts failed")

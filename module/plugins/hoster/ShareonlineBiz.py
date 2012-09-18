@@ -5,10 +5,12 @@ import re
 from base64 import b64decode
 import hashlib
 import random
-from time import sleep
+from time import time, sleep
 
-from module.plugins.Hoster import Hoster, chunks
+from module.plugins.Hoster import Hoster
 from module.network.RequestFactory import getURL
+from module.plugins.Plugin import chunks
+from module.plugins.ReCaptcha import ReCaptcha as _ReCaptcha
     
 def getInfo(urls):
     api_url_base = "http://api.share-online.biz/linkcheck.php"
@@ -32,14 +34,21 @@ def getInfo(urls):
             result.append((fields[2], int(fields[3]), status, chunk[i]))
         yield result
 
+#suppress ocr plugin
+class ReCaptcha(_ReCaptcha):
+    def result(self, server, challenge):
+        return self.plugin.decryptCaptcha("%simage"%server, get={"c":challenge}, cookies=True, forceUser=True, imgtype="jpg")
+
 class ShareonlineBiz(Hoster):
     __name__ = "ShareonlineBiz"
     __type__ = "hoster"
     __pattern__ = r"http://[\w\.]*?(share\-online\.biz|egoshare\.com)/(download.php\?id\=|dl/)[\w]+"
-    __version__ = "0.22"
+    __version__ = "0.33"
     __description__ = """Shareonline.biz Download Hoster"""
-    __author_name__ = ("spoob", "mkaay")
-    __author_mail__ = ("spoob@pyload.org", "mkaay@mkaay.de")
+    __author_name__ = ("spoob", "mkaay", "zoidberg")
+    __author_mail__ = ("spoob@pyload.org", "mkaay@mkaay.de", "zoidberg@mujmail.cz")
+    
+    ERROR_INFO_PATTERN = r'<p class="b">Information:</p>\s*<div>\s*<strong>(.*?)</strong>'
 
     def setup(self):
         # range request not working?
@@ -48,21 +57,29 @@ class ShareonlineBiz(Hoster):
         self.file_id = re.search(r"(id\=|/dl/)([a-zA-Z0-9]+)", self.pyfile.url).group(2)
         self.pyfile.url = "http://www.share-online.biz/dl/" + self.file_id
 
-        self.multiDL = False
-        self.chunkLimit = 1
-        if self.premium:
-            self.multiDL = True
-
-    def process(self, pyfile):
-        self.downloadAPIData()
-        pyfile.name = self.api_data["filename"]
-        pyfile.sync()
+        self.resumeDownload = self.multiDL = self.premium
+        #self.chunkLimit = 1
         
+        self.check_data = None
+
+    def process(self, pyfile):       
         if self.premium:
             self.handleAPIPremium()
-            #self.handleWebsitePremium()
+            #web-download fallback removed - didn't work anyway
         else:
             self.handleFree()
+        
+        """    
+        check = self.checkDownload({"failure": re.compile(self.ERROR_INFO_PATTERN)})
+        if check == "failure":
+            try:
+                self.retry(reason = self.lastCheck.group(1).decode("utf8"))
+            except:
+                self.retry(reason = "Unknown error")
+        """
+            
+        if self.api_data:           
+            self.check_data = {"size": int(self.api_data['size']), "md5": self.api_data['md5']}
 
     def downloadAPIData(self):
         api_url_base = "http://api.share-online.biz/linkcheck.php?md5=1"
@@ -76,101 +93,98 @@ class ShareonlineBiz(Hoster):
             self.offline()
         self.api_data["filename"] = fields[2]
         self.api_data["size"] = fields[3] # in bytes
-        self.api_data["checksum"] = fields[4].strip().lower().replace("\n\n", "") # md5
+        self.api_data["md5"] = fields[4].strip().lower().replace("\n\n", "") # md5
 
-    def handleFree(self):
-        self.resumeDownload = False
+    def handleFree(self):       
+        self.downloadAPIData()
+        self.pyfile.name = self.api_data["filename"]
+        self.pyfile.size = int(self.api_data["size"])
         
-        self.html = self.load(self.pyfile.url) #refer, stuff
-        self.html = self.load("%s/free/" % self.pyfile.url, post={"dl_free":"1", "choice": "free"})
-        if re.search(r"/failure/full/1", self.req.lastEffectiveURL):
-            self.setWait(120)
-            self.log.info("%s: no free slots, waiting 120 seconds" % self.__name__)
-            self.wait()
-            self.retry(max_tries=60)
-            
-        if "Captcha number error or expired" in self.html:
-            captcha = self.decryptCaptcha("http://www.share-online.biz/captcha.php", get={"rand":"0.%s" % random.randint(10**15,10**16)})
-                
-            self.log.debug("%s Captcha: %s" % (self.__name__, captcha))
-            sleep(3)
-            
-            self.html = self.load(self.pyfile.url, post={"captchacode": captcha})
-            
-            if r"Der Download ist Ihnen zu langsam" not in self.html and r"The download is too slow for you" not in self.html:
-                self.fail("Plugin defect. Save dumps and report.")
-
-        if "Kein weiterer Download-Thread möglich!" in self.html: #TODO corresponding translation
-            self.retry(wait_time=30, reason=_("Parallel download issue"))
-
-        m = re.search("var wait=(\d+);", self.html[1])
-        wait_time = int(m.group(1)) if m else 30
-        self.setWait(wait_time)
-        self.log.debug("%s: Waiting %d seconds." % (self.__name__, wait_time))
+        self.html = self.load(self.pyfile.url, cookies = True) #refer, stuff
+        self.setWait(3)
         self.wait()
         
-        file_url_pattern = r'var\sdl="(.*?)"'
-        download_url = b64decode(re.search(file_url_pattern, self.html).group(1))
+        self.html = self.load("%s/free/" % self.pyfile.url, post={"dl_free":"1", "choice": "free"}, decode = True)        
+        self.checkErrors()
+            
+        found = re.search(r'var wait=(\d+);', self.html)                    
+                
+        recaptcha = ReCaptcha(self)
+        for i in range(5):               
+            challenge, response = recaptcha.challenge("6LdatrsSAAAAAHZrB70txiV5p-8Iv8BtVxlTtjKX")            
+            self.setWait(int(found.group(1)) if found else 30)             
+            response = self.load("%s/free/captcha/%d" % (self.pyfile.url, int(time() * 1000)), post = {
+                'dl_free': '1',
+                'recaptcha_challenge_field': challenge,
+                'recaptcha_response_field': response})
+            
+            if not response == '0':
+                break
+
+        else: self.fail("No valid captcha solution received")
         
+        download_url = response.decode("base64")
+        self.logDebug(download_url)
+        if not download_url.startswith("http://"):
+            self.parseError("download url")
+        
+        self.wait()        
         self.download(download_url)
-
-        check = self.checkDownload({"invalid" : "Dieses Download-Ticket ist ungültig!",
-                                    "error"   : "Es ist ein unbekannter Fehler aufgetreten"})
-        if check == "invalid":
-            self.retry(reason=_("Invalid download ticket"))
-        elif check == "error":
-            self.fail(reason=_("ShareOnline internal problems"))
-
     
-    def handleAPIPremium(self): #should be working better
-        self.resumeDownload = True
-
-        info = self.account.getUserAPI(self.req)
-        if info["dl"].lower() == "not_available":
-            self.fail("DL API error")
-        self.req.cj.setCookie("share-online.biz", "dl", info["dl"])
-        
-        
+    def checkErrors(self):
+        found = re.search(r"/failure/(.*?)/1", self.req.lastEffectiveURL)
+        if found:
+            err = found.group(1)
+            found = re.search(self.ERROR_INFO_PATTERN, self.html)
+            msg = found.group(1) if found else ""
+            self.logError(err, msg or "Unknown error occurred") 
+                        
+            if err in ('freelimit', 'size', 'proxy'):
+                self.fail(msg or "Premium account needed")
+            if err in ('invalid'):
+                self.fail(msg or "File not available")
+            elif err in ('server'):
+                self.setWait(600, False)
+            elif err in ('expired'):
+                self.setWait(30, False)
+            else:                
+                self.setWait(300, True)
+                
+            self.wait()
+            self.retry(max_tries=25, reason = msg)        
+    
+    def handleAPIPremium(self): #should be working better                        
+        self.account.getAccountInfo(self.user, True)
         src = self.load("http://api.share-online.biz/account.php?username=%s&password=%s&act=download&lid=%s" % (self.user, self.account.accounts[self.user]["password"], self.file_id), post={})
-        dlinfo = {}
+        self.api_data = dlinfo = {}
         for line in src.splitlines():
             key, value = line.split(": ")
             dlinfo[key.lower()] = value
         
-        if not dlinfo["status"].lower() == "online":
+        self.logDebug(dlinfo)
+        if not dlinfo["status"] == "online":
             self.offline()
         
+        self.pyfile.name = dlinfo["name"]
+        self.pyfile.size = int(dlinfo["size"])
+               
         dlLink = dlinfo["url"]
-        if dlLink.startswith("/_dl.php"):
-            self.log.debug("got invalid downloadlink, falling back")
-            self.handleWebsitePremium()
+        if dlLink == "server_under_maintenance":
+            self.tempoffline()
         else:
             self.download(dlLink)
     
-    def handleWebsitePremium(self): #seems to be buggy
-        self.resumeDownload = False
-        
-        self.html = self.load(self.pyfile.url)
-        if r"Die Nummer ist leider nicht richtig oder ausgelaufen!" in self.html:
-            self.retry()
-        
-        try:
-            download_url = re.search('loadfilelink\.decode\("(.*?)"\);', self.html, re.S).group(1)
-        except:
-            self.fail("Session issue")
-        
-        self.download(download_url)
-    
     def checksum(self, local_file):
-        if self.api_data and self.api_data["checksum"]:
+        if self.api_data and "md5" in self.api_data and self.api_data["md5"]:
             h = hashlib.md5()
             f = open(local_file, "rb")
             h.update(f.read())
             f.close()
             hexd = h.hexdigest()
-            if hexd == self.api_data["checksum"]:
+            if hexd == self.api_data["md5"]:
                 return True, 0
             else:
                 return False, 1
         else:
+            self.logWarning("MD5 checksum missing")
             return True, 5

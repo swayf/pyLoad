@@ -33,7 +33,7 @@ def getInfo(urls):
             # Get file info
             name = re.search(LoadTo.FILE_NAME_PATTERN, html)
             size = re.search(LoadTo.SIZE_PATTERN, html)
-            if name is not None:
+            if name is not None and size is not None:
                 name = name.group(1)
                 size = size.group(1)
                 result.append((name, size, 2, url))
@@ -42,14 +42,14 @@ def getInfo(urls):
 class LoadTo(Hoster):
     __name__ = "LoadTo"
     __type__ = "hoster"
-    __pattern__ = r"http://.*load.to/.*"
-    __version__ = "0.1"
+    __pattern__ = r"http://(www.*?\.)?load\.to/.{7,10}?/.*" 
+    __version__ = "0.1002"
     __description__ = """load.to"""
     __author_name__ = ("halfman")
     __author_mail__ = ("Pulpan3@gmail.com")
 
-    FILE_NAME_PATTERN = r'<div class="toolarge"><h1>([^<]+)</h1></div>'
-    URL_PATTERN = r'<form method="post" action="([^"]+)"'
+    FILE_NAME_PATTERN = r'<div class="toolarge"><h1>(.+?)</h1></div>'
+    URL_PATTERN = r'<form method="post" action="(.+?)"'
     SIZE_PATTERN = r'<div class="download_table_right">(\d+) Bytes</div>'
     FILE_OFFLINE_PATTERN = r'Can\'t find file. Please check URL.<br />'
     WAIT_PATTERN = r'type="submit" value="Download \((\d+)\)"'
@@ -64,11 +64,6 @@ class LoadTo(Hoster):
         if re.search(self.FILE_OFFLINE_PATTERN, self.html):
             self.offline()
         
-        timmy = re.search(self.WAIT_PATTERN, self.html)
-        if timmy:
-            self.setWait(timmy.group(1))
-            self.wait()
-
         found = re.search(self.FILE_NAME_PATTERN, self.html)
         if found is None:
             self.fail("Parse error (NAME)")
@@ -78,5 +73,10 @@ class LoadTo(Hoster):
         if found is None:
             self.fail("Parse error (URL)")
         download_url = found.group(1)
+        
+        timmy = re.search(self.WAIT_PATTERN, self.html)
+        if timmy:
+            self.setWait(timmy.group(1))
+            self.wait()
 
         self.download(download_url)
